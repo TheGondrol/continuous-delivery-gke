@@ -409,7 +409,99 @@ gcloud artifacts repositories add-iam-policy-binding gc-bribrain-dev-gar-temp-01
   --member="serviceAccount:<SA-RUNNER>" --role="roles/artifactregistry.writer"
 ```
 
-### 3. Izin service account — lintas tiga project
+### 3a. Izin akun pemanggil (yang menjalankan `release.sh`)
+
+Ada **dua identitas** yang berbeda dan mudah tertukar:
+
+| Identitas | Perannya | Diatur di |
+|---|---|---|
+| Akun pemanggil (`user:...` atau SA runner) | Menjalankan `gcloud deploy apply` & `releases create` | bagian ini |
+| SA eksekutor Cloud Deploy | Menerapkan manifest ke GKE | bagian 3b |
+
+Izin SA eksekutor **tidak** menolong akun pemanggil. Gejala bila tertukar:
+
+```
+ERROR: (gcloud.deploy.apply) Status code: 403.
+Permission 'clouddeploy.deliveryPipelines.update' denied on
+'projects/.../deliveryPipelines/<app>-gke-pipeline'.
+This command is authenticated as 00366196@hq.bri.co.id
+```
+
+Akun pemanggil **tidak harus perorangan** — service account justru lebih tepat
+untuk CI. Isi `IMPERSONATE_SA` di `.env`:
+
+```bash
+IMPERSONATE_SA=gc-bribrain-dev-sac-vai-01@edm-bribrain-dev-01.iam.gserviceaccount.com
+```
+
+`release.sh` meneruskannya sebagai `--impersonate-service-account` ke **semua**
+pemanggilan `gcloud` — token Artifact Registry, `deploy apply`, dan
+`releases create` — jadi ketiganya memakai identitas yang sama. Banner rilis
+mencetak identitas yang sedang dipakai supaya tidak ada keraguan.
+
+Impersonasi dipilih ketimbang mengunduh kunci JSON SA: tidak ada kredensial
+jangka panjang yang mendarat di disk. Prasyaratnya, akun kamu boleh meminjam SA itu:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  gc-bribrain-dev-sac-vai-01@edm-bribrain-dev-01.iam.gserviceaccount.com \
+  --member='user:00366196@hq.bri.co.id' \
+  --role='roles/iam.serviceAccountTokenCreator'
+```
+
+Alternatif tanpa impersonasi: pasang SA itu langsung ke VM GCE (`--service-account`
+saat VM dibuat, atau ubah saat VM berhenti), lalu biarkan `IMPERSONATE_SA` kosong.
+
+Role yang dibutuhkan tergantung sejauh mana `release.sh` boleh mengubah konfigurasi
+— dan sekarang diberikan ke **SA**, bukan akunmu:
+
+| Role | Boleh | Cukup untuk |
+|---|---|---|
+| `roles/clouddeploy.developer` | Buat/ubah pipeline & target, buat release | `release.sh` penuh |
+| `roles/clouddeploy.releaser` | Buat release & rollout saja | `SKIP_PIPELINE_APPLY=1` |
+
+```bash
+SA=gc-bribrain-dev-sac-vai-01@edm-bribrain-dev-01.iam.gserviceaccount.com
+
+# Jalur penuh — bisa mendaftarkan/memperbarui pipeline sendiri
+gcloud projects add-iam-policy-binding edm-bribrain-dev-01 \
+  --member="serviceAccount:${SA}" --role="roles/clouddeploy.developer"
+
+# Push image ke project AR
+gcloud artifacts repositories add-iam-policy-binding gc-bribrain-dev-gar-temp-01 \
+  --location=asia-southeast2 --project=common-cicd-dev-01 \
+  --member="serviceAccount:${SA}" --role="roles/artifactregistry.writer"
+```
+
+> SA inilah yang butuh `artifactregistry.writer` — bukan SA VM — begitu
+> `IMPERSONATE_SA` diisi, karena token AR pun diambil sebagai SA tersebut.
+
+#### Bila akun tidak boleh menyentuh pipeline
+
+Pisahkan sekali-jalan dari rilis harian. **Admin** mendaftarkan pipeline satu kali:
+
+```bash
+gcloud deploy apply --file=clouddeploy.yaml \
+  --region=asia-southeast2 --project=edm-bribrain-dev-01
+```
+
+Lalu rilis harian cukup `roles/clouddeploy.releaser`:
+
+```bash
+gcloud projects add-iam-policy-binding edm-bribrain-dev-01 \
+  --member="serviceAccount:${SA}" --role="roles/clouddeploy.releaser"
+
+SKIP_PIPELINE_APPLY=1 ./release.sh iris-classifier v1.2.0
+```
+
+> Dengan `SKIP_PIPELINE_APPLY=1`, perubahan pada `clouddeploy.yaml` **tidak**
+> diterapkan — mengaktifkan staging/prod atau mengubah target tetap perlu
+> `deploy apply` oleh admin.
+
+Akun pemanggil juga butuh `roles/iam.serviceAccountUser` pada SA eksekutor agar
+boleh menyuruhnya bekerja.
+
+### 3b. Izin service account eksekutor — lintas tiga project
 
 Rilis ini menyentuh **tiga project berbeda**, masing-masing dengan perannya:
 

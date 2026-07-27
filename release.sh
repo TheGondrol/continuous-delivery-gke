@@ -112,6 +112,30 @@ elif [[ -n "${VAULT_NEXUS_PATH:-}" ]]; then
   exit 1
 fi
 
+# Impersonasi service account (opsional). Diterapkan ke SEMUA pemanggilan gcloud
+# — token AR, deploy apply, dan releases create — supaya identitasnya konsisten.
+# Memakai impersonasi lebih baik daripada mengunduh kunci JSON SA.
+IMPERSONATE_SA="${IMPERSONATE_SA:-}"
+GCLOUD_IMP=""
+if [[ -n "$IMPERSONATE_SA" ]]; then
+  GCLOUD_IMP="--impersonate-service-account=$IMPERSONATE_SA"
+fi
+
+# Member IAM untuk pesan bantuan: SA dan akun perorangan punya prefiks berbeda.
+iam_member() {
+  local acct
+  if [[ -n "$IMPERSONATE_SA" ]]; then
+    acct="$IMPERSONATE_SA"
+  else
+    acct="$(gcloud config get-value account 2>/dev/null || true)"
+  fi
+  case "$acct" in
+    *gserviceaccount.com) echo "serviceAccount:$acct" ;;
+    "")                   echo "<akun-anda>" ;;
+    *)                    echo "user:$acct" ;;
+  esac
+}
+
 # Baca satu path Vault (KV v2) -> JSON ke stdout.
 # Dipakai untuk kredensial Nexus (fase 1) maupun secret aplikasi (fase 2).
 vault_read() {
@@ -163,6 +187,11 @@ if [[ -n "$VAULT_NEXUS_PATH" ]]; then
 else
   echo " Vault nexus: (nonaktif - kredensial Nexus dari $ENV_FILE)"
 fi
+if [[ -n "$IMPERSONATE_SA" ]]; then
+  echo " Identitas  : $IMPERSONATE_SA (impersonasi)"
+else
+  echo " Identitas  : $(gcloud config get-value account 2>/dev/null || echo '?')"
+fi
 echo " Release    : $RELEASE_NAME"
 echo "=============================================================="
 
@@ -205,13 +234,20 @@ unset NEXUS_PASS
 case "$AR_HOST" in
   *.pkg.dev|*gcr.io)
     echo "   Login ke Artifact Registry: $AR_HOST"
-    AR_TOKEN="$(gcloud auth print-access-token 2>/dev/null)" || AR_TOKEN=""
+    AR_TOKEN="$(gcloud auth print-access-token $GCLOUD_IMP 2>/dev/null)" || AR_TOKEN=""
     if [[ -z "$AR_TOKEN" ]]; then
       echo "!! Gagal mengambil access token gcloud untuk $AR_HOST." >&2
-      echo "   Di VM GCE : VM butuh scope 'cloud-platform'. Periksa dengan:" >&2
-      echo "     curl -s -H 'Metadata-Flavor: Google' \\" >&2
-      echo "       http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes" >&2
-      echo "   Di luar   : jalankan 'gcloud auth login', atau set GOOGLE_APPLICATION_CREDENTIALS." >&2
+      if [[ -n "$IMPERSONATE_SA" ]]; then
+        echo "   Sedang mengimpersonasi: $IMPERSONATE_SA" >&2
+        echo "   Akun pemanggil butuh roles/iam.serviceAccountTokenCreator pada SA itu:" >&2
+        echo "     gcloud iam service-accounts add-iam-policy-binding $IMPERSONATE_SA \\" >&2
+        echo "       --member='$(iam_member)' --role='roles/iam.serviceAccountTokenCreator'" >&2
+      else
+        echo "   Di VM GCE : VM butuh scope 'cloud-platform'. Periksa dengan:" >&2
+        echo "     curl -s -H 'Metadata-Flavor: Google' \\" >&2
+        echo "       http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes" >&2
+        echo "   Di luar   : jalankan 'gcloud auth login', atau set IMPERSONATE_SA." >&2
+      fi
       exit 1
     fi
     printf '%s' "$AR_TOKEN" \
@@ -297,10 +333,17 @@ if [[ -n "${VAULT_ADDR:-}" ]]; then
       [(.data.data // {}) | keys_unsorted[] | select(. as $k | $ex | index($k))] | join(", ")' <<<"$VAULT_JSON")"
   VERSION="$(jq -r '.data.metadata.version // "?"' <<<"$VAULT_JSON")"
 
-  if [[ -z "$SECRET_BODY" ]]; then
-    echo "   !! Tidak ada key yang layak dikirim ke pod (versi $VERSION). Secret dirender kosong." >&2
-  else
+  # Tiga kondisi berbeda, jangan disamakan:
+  #   a. ada key untuk pod            -> normal
+  #   b. semua key tersaring          -> normal, path itu memang hanya infra
+  #   c. Vault balas tanpa key sama sekali -> patut dicurigai (path salah?)
+  if [[ -n "$SECRET_BODY" ]]; then
     echo "   OK - versi $VERSION, key ke pod: $KEPT"
+  elif [[ -n "$DROPPED" ]]; then
+    echo "   OK - versi $VERSION, tidak ada secret aplikasi di path ini."
+    echo "        Secret pod dirender kosong; aplikasi memakai ConfigMap saja."
+  else
+    echo "   !! Vault balas tanpa key apa pun (versi $VERSION) - periksa VAULT_SECRET_PATH." >&2
   fi
   # Selalu laporkan apa yang disaring — jangan pernah diam-diam membuang.
   [[ -n "$DROPPED" ]] && echo "   Dikecualikan (kredensial runner, tidak ke pod): $DROPPED"
@@ -330,11 +373,35 @@ unset SECRET_BODY
 # ---------- FASE 3: Daftarkan pipeline & buat release ----------
 echo ">> [3/3] Membuat release Cloud Deploy..."
 
-# Daftarkan/refresh pipeline & target
-gcloud deploy apply \
-  --file="$WORKDIR/clouddeploy.yaml" \
-  --region="$REGION" \
-  --project="$TOOLING_PROJECT"
+# Mendaftarkan pipeline butuh roles/clouddeploy.developer, sedangkan membuat
+# release cukup roles/clouddeploy.releaser. Di lingkungan dengan akun terbatas,
+# admin menjalankan `gcloud deploy apply` sekali, lalu rilis harian jalan dengan
+# SKIP_PIPELINE_APPLY=1 memakai izin yang lebih rendah.
+if [[ -n "${SKIP_PIPELINE_APPLY:-}" ]]; then
+  echo "   Lewati 'deploy apply' (SKIP_PIPELINE_APPLY diisi)."
+  echo "   Pipeline & target dianggap sudah terdaftar; perubahan pada"
+  echo "   clouddeploy.yaml TIDAK akan diterapkan pada rilis ini."
+else
+  if ! gcloud deploy apply \
+        --file="$WORKDIR/clouddeploy.yaml" \
+        --region="$REGION" \
+        --project="$TOOLING_PROJECT" $GCLOUD_IMP; then
+    echo "" >&2
+    echo "!! Gagal mendaftarkan pipeline di $TOOLING_PROJECT." >&2
+    echo "   Bila pesannya 403 'clouddeploy.deliveryPipelines.update denied':" >&2
+    echo "   identitas pemanggil kurang izin. Dua jalan keluar:" >&2
+    echo "" >&2
+    echo "   1) Beri roles/clouddeploy.developer pada $TOOLING_PROJECT:" >&2
+    echo "      gcloud projects add-iam-policy-binding $TOOLING_PROJECT \\" >&2
+    echo "        --member='$(iam_member)' \\" >&2
+    echo "        --role='roles/clouddeploy.developer'" >&2
+    echo "" >&2
+    echo "   2) Minta admin menjalankan 'gcloud deploy apply' sekali, lalu rilis" >&2
+    echo "      berikutnya cukup roles/clouddeploy.releaser:" >&2
+    echo "      SKIP_PIPELINE_APPLY=1 ./release.sh $APP_NAME $IMAGE_TAG" >&2
+    exit 1
+  fi
+fi
 
 # Buat release; image aktual diinjeksikan lewat --images
 gcloud deploy releases create "$RELEASE_NAME" \
@@ -342,7 +409,7 @@ gcloud deploy releases create "$RELEASE_NAME" \
   --region="$REGION" \
   --project="$TOOLING_PROJECT" \
   --source="$WORKDIR" \
-  --images="${APP_NAME}=${DST_IMAGE}"
+  --images="${APP_NAME}=${DST_IMAGE}" $GCLOUD_IMP
 
 echo ""
 echo ">> Release '$RELEASE_NAME' dibuat. Rollout ke 'dev' berjalan otomatis."
