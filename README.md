@@ -285,6 +285,55 @@ kubectl get deploy,svc,hpa,ingress -l app=iris-classifier
 
 ---
 
+## Prasyarat perkakas
+
+`release.sh` memeriksa semuanya di awal dan berhenti dengan daftar yang kurang,
+sebelum menyentuh Vault maupun registry.
+
+| Perkakas | Untuk | Wajib |
+|---|---|:--:|
+| `crane` | Mirror image Nexus → AR | ✅ |
+| `gcloud` | `deploy apply` & `releases create` | ✅ |
+| `curl` + `jq` | Baca secret dari Vault | bila `VAULT_ADDR` diisi |
+
+`release.sh` menyesuaikan saran pemasangannya dengan OS tempat ia dijalankan.
+
+### Runner Linux (GCE) — target sesungguhnya
+
+`gcloud` sudah tersedia di image GCE bawaan Google. Yang perlu ditambahkan
+hanyalah `crane` (`jq` & `curl` biasanya sudah ada):
+
+```bash
+# crane — arch x86_64; ganti ke arm64 untuk VM Tau/Axion
+curl -sSL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" \
+  | sudo tar -xz -C /usr/local/bin crane
+crane version
+
+# jq bila belum ada
+sudo apt-get install -y jq        # Debian/Ubuntu
+```
+
+Lalu sekali saja, agar `crane` bisa push ke Artifact Registry memakai service
+account VM:
+
+```bash
+gcloud auth configure-docker asia-southeast2-docker.pkg.dev
+```
+
+> VM butuh **scope** `cloud-platform` (atau minimal `devstorage.read_write`) dan
+> SA-nya butuh `roles/artifactregistry.writer` di `common-cicd-dev-01` — lihat
+> setup no. 2. Scope tidak bisa diubah saat VM menyala; kalau kurang, hentikan
+> VM dulu atau pakai VM baru.
+
+### macOS — hanya untuk uji lokal
+
+```bash
+brew install crane jq
+brew install --cask gcloud-cli     # bukan `brew install gcloud` — formula itu tidak ada
+```
+
+---
+
 ## Setup sekali-jalan (per project tooling)
 
 > Sebagian butuh izin admin — ajukan ke tim Cloud BRI bila akun terbatas.

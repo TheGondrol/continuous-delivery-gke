@@ -52,6 +52,53 @@ require() {
 require REGION APP_PORT TOOLING_PROJECT AR_HOST AR_REPO \
         NEXUS_HOST NEXUS_PATH DEV_PROJECT DEV_CLUSTER
 
+# ---------- Prasyarat perkakas ----------
+# Dicek SEKALIGUS di awal: sebelumnya `crane` yang belum terpasang baru terdeteksi
+# di tengah fase 1, setelah Vault sudah dibaca. Sintaks tanpa array supaya jalan
+# di bash 3.2 (bawaan macOS).
+MISSING=""
+for t in crane gcloud; do
+  command -v "$t" >/dev/null 2>&1 || MISSING="$MISSING $t"
+done
+if [[ -n "${VAULT_ADDR:-}" ]]; then
+  for t in curl jq; do
+    command -v "$t" >/dev/null 2>&1 || MISSING="$MISSING $t"
+  done
+fi
+if [[ -n "$MISSING" ]]; then
+  echo "!! Perkakas belum terpasang:$MISSING" >&2
+
+  # Saran pemasangan disesuaikan OS: runner sesungguhnya Linux (GCE), sedangkan
+  # macOS hanya dipakai untuk uji lokal. Nama paket brew: `gcloud-cli` (cask),
+  # bukan `gcloud` — formula bernama `gcloud` tidak ada.
+  CRANE_ARCH="$(uname -m)"
+  case "$CRANE_ARCH" in
+    aarch64|arm64) CRANE_ARCH=arm64 ;;
+    x86_64|amd64)  CRANE_ARCH=x86_64 ;;
+  esac
+  CRANE_URL="https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_$(uname -s)_${CRANE_ARCH}.tar.gz"
+
+  for t in $MISSING; do
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      case "$t" in
+        crane)  echo "   crane  : brew install crane" >&2 ;;
+        jq)     echo "   jq     : brew install jq" >&2 ;;
+        curl)   echo "   curl   : bawaan OS - periksa PATH" >&2 ;;
+        gcloud) echo "   gcloud : brew install --cask gcloud-cli" >&2 ;;
+      esac
+    else
+      case "$t" in
+        crane)  echo "   crane  : curl -sSL $CRANE_URL | sudo tar -xz -C /usr/local/bin crane" >&2 ;;
+        jq)     echo "   jq     : sudo apt-get install -y jq   # atau: dnf install jq" >&2 ;;
+        curl)   echo "   curl   : sudo apt-get install -y curl" >&2 ;;
+        gcloud) echo "   gcloud : https://cloud.google.com/sdk/docs/install" >&2 ;;
+      esac
+    fi
+  done
+  echo "   Detail : README bagian 'Prasyarat perkakas'" >&2
+  exit 1
+fi
+
 # Vault opsional, tapi bila diaktifkan cek prasyaratnya SEKARANG — jangan sampai
 # gagal setelah mirror image (fase 1) sudah terlanjur jalan.
 if [[ -n "${VAULT_ADDR:-}" ]]; then
@@ -60,7 +107,6 @@ if [[ -n "${VAULT_ADDR:-}" ]]; then
     echo "   Set lewat env var dari CI (bukan .env): export VAULT_TOKEN=..." >&2
     exit 1
   }
-  command -v jq >/dev/null || { echo "!! 'jq' dibutuhkan untuk membaca Vault." >&2; exit 1; }
 elif [[ -n "${VAULT_NEXUS_PATH:-}" ]]; then
   echo "!! VAULT_NEXUS_PATH diisi tapi VAULT_ADDR kosong." >&2
   exit 1
