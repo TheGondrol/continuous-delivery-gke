@@ -449,8 +449,49 @@ gcloud iam service-accounts add-iam-policy-binding \
   --role='roles/iam.serviceAccountTokenCreator'
 ```
 
-Alternatif tanpa impersonasi: pasang SA itu langsung ke VM GCE (`--service-account`
-saat VM dibuat, atau ubah saat VM berhenti), lalu biarkan `IMPERSONATE_SA` kosong.
+#### Menghilangkan akun perorangan sepenuhnya
+
+Impersonasi **selalu** menyisakan pemanggil — selalu ada identitas yang meminjam,
+dan identitas itu butuh `serviceAccountTokenCreator` selamanya. Untuk runner,
+lebih bersih menjadikan SA sebagai identitas **utama**:
+
+| Cara | Akun perorangan terlibat? | Kapan dipakai |
+|---|:--:|---|
+| `IMPERSONATE_SA` | Ya, tiap rilis | Uji dari laptop, atau SA tak bisa dipasang ke VM |
+| **SA terpasang di VM GCE** | **Tidak** | Runner tetap — pilihan utama |
+| Kunci JSON SA | Tidak | Hindari: kredensial abadi di disk |
+
+Memasang SA ke VM (butuh VM berhenti — scope tidak bisa diubah saat menyala):
+
+```bash
+gcloud compute instances stop <VM> --zone=<ZONA> --project=<PROJECT-VM>
+
+gcloud compute instances set-service-account <VM> \
+  --zone=<ZONA> --project=<PROJECT-VM> \
+  --service-account=gc-bribrain-dev-sac-vai-01@edm-bribrain-dev-01.iam.gserviceaccount.com \
+  --scopes=https://www.googleapis.com/auth/cloud-platform
+
+gcloud compute instances start <VM> --zone=<ZONA> --project=<PROJECT-VM>
+```
+
+Lalu di runner: kosongkan `IMPERSONATE_SA`, dan
+
+```bash
+gcloud config set account gc-bribrain-dev-sac-vai-01@edm-bribrain-dev-01.iam.gserviceaccount.com
+```
+
+Periksa kondisi VM sebelum meminta perubahan apa pun:
+
+```bash
+curl -s -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
+curl -s -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes
+gcloud auth list
+```
+
+> Scope `cloud-platform` wajib. Tanpa itu SA-nya benar tapi tokennya tidak
+> berwenang — gejalanya mirip kurang role, padahal masalahnya scope.
 
 Role yang dibutuhkan tergantung sejauh mana `release.sh` boleh mengubah konfigurasi
 — dan sekarang diberikan ke **SA**, bukan akunmu:
