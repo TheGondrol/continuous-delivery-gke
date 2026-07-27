@@ -97,10 +97,19 @@ Env var dari shell **menang** atas `.env`, berguna untuk override sekali-jalan:
 APP_PORT=8080 ./release.sh other-app latest
 ```
 
-Cek nama cluster yang tersedia:
+`DEV_PROJECT` / `DEV_CLUSTER` / `REGION` bisa dibaca langsung dari nama context
+kubeconfig, yang berformat `gke_<PROJECT>_<LOCATION>_<CLUSTER>`:
+
+```
+gke_ddb-kubecluster-dev-01_asia-southeast2_gc-ddb-dev-gke-cluster-01
+    └── DEV_PROJECT ────┘ └── REGION ──┘ └── DEV_CLUSTER ─────────┘
+```
+
+Cek context yang ada di runner, atau daftar cluster di project itu:
 
 ```bash
-gcloud container clusters list --project=edm-bribrain-dev-01
+kubectl config get-contexts -o name
+gcloud container clusters list --project=ddb-kubecluster-dev-01
 ```
 
 ---
@@ -282,6 +291,8 @@ kubectl get deploy,svc,hpa,ingress -l app=iris-classifier
 
 ### 1. Aktifkan API
 
+Di project **tooling** (tempat pipeline didaftarkan):
+
 ```bash
 gcloud services enable \
   clouddeploy.googleapis.com \
@@ -289,6 +300,13 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   cloudbuild.googleapis.com \
   --project=edm-bribrain-dev-01
+```
+
+Di project **cluster** (agar Cloud Deploy bisa memanggil GKE di sana):
+
+```bash
+gcloud services enable container.googleapis.com \
+  --project=ddb-kubecluster-dev-01
 ```
 
 ### 2. Repo Artifact Registry (tujuan mirror)
@@ -318,53 +336,68 @@ gcloud artifacts repositories add-iam-policy-binding gc-bribrain-dev-gar-temp-01
   --member="serviceAccount:<SA-RUNNER>" --role="roles/artifactregistry.writer"
 ```
 
-### 3. Izin service account Cloud Deploy
+### 3. Izin service account — lintas tiga project
+
+Rilis ini menyentuh **tiga project berbeda**, masing-masing dengan perannya:
+
+| Project | Peran | Variabel |
+|---|---|---|
+| `edm-bribrain-dev-01` | Pipeline & release Cloud Deploy terdaftar di sini | `TOOLING_PROJECT` |
+| `common-cicd-dev-01` | Repo Artifact Registry (image disimpan) | `AR_PROJECT` |
+| `ddb-kubecluster-dev-01` | Cluster GKE tujuan deploy | `DEV_PROJECT` |
+
+Karena ketiganya terpisah, izin harus diberikan **di project tujuan masing-masing**
+— memberi semua role di satu project tidak akan cukup.
 
 ```bash
-PROJECT_ID=edm-bribrain-dev-01
-PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
-SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-
-# deploy ke GKE
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:${SA}" --role="roles/container.developer"
-
-# operasi Cloud Deploy
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:${SA}" --role="roles/clouddeploy.jobRunner"
-
-# bertindak sebagai SA
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:${SA}" --role="roles/iam.serviceAccountUser"
-```
-
-> Untuk staging/prod di project berbeda, SA butuh izin serupa di project tujuan.
-
-#### Izin baca lintas project (wajib, karena AR di project lain)
-
-Node GKE-lah yang mem-*pull* image, memakai service account node-pool-nya —
-bukan SA Cloud Deploy. Karena repo AR ada di `common-cicd-dev-01` sementara
-cluster ada di `edm-bribrain-dev-01`, SA node **harus** diberi izin baca di repo
-itu. Tanpa ini rollout tampak sukses lalu pod berhenti di `ImagePullBackOff`:
-
-```bash
+TOOLING_PROJECT=edm-bribrain-dev-01
+DEV_PROJECT=ddb-kubecluster-dev-01
 AR_PROJECT=common-cicd-dev-01
 AR_REPO=gc-bribrain-dev-gar-temp-01
 
-# SA node pool cluster dev — cek dulu yang sebenarnya dipakai:
-gcloud container node-pools describe <NODE_POOL> \
-  --cluster=<DEV_CLUSTER> --region=asia-southeast2 \
-  --project=edm-bribrain-dev-01 --format='value(config.serviceAccount)'
+# SA eksekutor Cloud Deploy — milik project TOOLING
+TP_NUMBER=$(gcloud projects describe $TOOLING_PROJECT --format='value(projectNumber)')
+SA="${TP_NUMBER}-compute@developer.gserviceaccount.com"
 
+# --- di project TOOLING: menjalankan operasi Cloud Deploy ---
+gcloud projects add-iam-policy-binding $TOOLING_PROJECT \
+  --member="serviceAccount:${SA}" --role="roles/clouddeploy.jobRunner"
+gcloud projects add-iam-policy-binding $TOOLING_PROJECT \
+  --member="serviceAccount:${SA}" --role="roles/iam.serviceAccountUser"
+
+# --- di project CLUSTER: menerapkan manifest ke GKE ---
+gcloud projects add-iam-policy-binding $DEV_PROJECT \
+  --member="serviceAccount:${SA}" --role="roles/container.developer"
+
+# --- di project AR: membaca manifest & image saat render ---
 gcloud artifacts repositories add-iam-policy-binding "$AR_REPO" \
   --location=asia-southeast2 --project="$AR_PROJECT" \
+  --member="serviceAccount:${SA}" --role="roles/artifactregistry.reader"
+```
+
+> Ulangi blok "project CLUSTER" untuk staging/prod saat environment itu diaktifkan.
+
+#### Izin pull image oleh node GKE (paling mudah terlewat)
+
+Yang mem-*pull* image adalah service account **node pool**, bukan SA Cloud Deploy.
+Repo AR ada di `common-cicd-dev-01` sementara node ada di `ddb-kubecluster-dev-01`,
+jadi SA node harus diberi izin baca lintas project. Tanpa ini rollout **tampak
+sukses** lalu pod berhenti di `ImagePullBackOff`:
+
+```bash
+# cari SA node pool yang sebenarnya dipakai
+gcloud container node-pools list \
+  --cluster=gc-ddb-dev-gke-cluster-01 --region=asia-southeast2 \
+  --project=ddb-kubecluster-dev-01 --format='value(name,config.serviceAccount)'
+
+gcloud artifacts repositories add-iam-policy-binding gc-bribrain-dev-gar-temp-01 \
+  --location=asia-southeast2 --project=common-cicd-dev-01 \
   --member="serviceAccount:<SA-NODE>" --role="roles/artifactregistry.reader"
 ```
 
 > Bila `config.serviceAccount` berisi `default`, yang dipakai adalah
-> `<PROJECT_NUMBER>-compute@developer.gserviceaccount.com` milik project cluster.
-> Ulangi pemberian izin ini untuk setiap cluster (dev/staging/prod) yang
-> menarik image dari repo tersebut.
+> `<PROJECT_NUMBER>-compute@developer.gserviceaccount.com` milik
+> `ddb-kubecluster-dev-01` — bukan milik project tooling.
 
 ### 4. Prasyarat jaringan (internal LB / ingress)
 
