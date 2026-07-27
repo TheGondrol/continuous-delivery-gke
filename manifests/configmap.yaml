@@ -1,0 +1,16 @@
+# =============================================================================
+# configmap.yaml - Konfigurasi aplikasi (environment variables)
+# -----------------------------------------------------------------------------
+# Diinjeksikan ke pod via envFrom di deployment.yaml.
+# Tambah/ubah key sesuai kebutuhan aplikasi. JANGAN taruh secret di sini
+# (gunakan Kubernetes Secret / Secret Manager untuk kredensial).
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: APP_NAME-config
+data:
+  APP_ENV: "dev"
+  # Contoh konfigurasi tambahan:
+  # LOG_LEVEL: "info"
+  # MODEL_PATH: "/models/iris"

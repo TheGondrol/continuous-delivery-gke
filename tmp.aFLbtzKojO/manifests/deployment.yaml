@@ -1,0 +1,52 @@
+# =============================================================================
+# deployment.yaml - Menjalankan pod aplikasi
+# -----------------------------------------------------------------------------
+# Placeholder disubstitusi oleh release.sh: iris-classifier, 5000.
+# Field image: placeholder -> di-override Cloud Deploy via --images.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iris-classifier
+  labels:
+    app: iris-classifier
+spec:
+  replicas: 2                          # HPA akan menyesuaikan; ini nilai awal
+  selector:
+    matchLabels:
+      app: iris-classifier
+  template:
+    metadata:
+      labels:
+        app: iris-classifier
+    spec:
+      containers:
+        - name: iris-classifier
+          image: iris-classifier              # di-override oleh Cloud Deploy --images
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: iris-classifier-config
+            # Secret dari Vault. Manifest-nya dihasilkan release.sh saat rilis
+            # (lihat manifests/secret.yaml di workdir sementara), jadi selalu ada
+            # walau isinya kosong ketika Vault nonaktif.
+            - secretRef:
+                name: iris-classifier-secret
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          readinessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 15

@@ -1,0 +1,62 @@
+# =============================================================================
+# clouddeploy.yaml - Delivery Pipeline + Targets (template standar, GKE)
+# -----------------------------------------------------------------------------
+# File ini TIDAK di-apply langsung. `release.sh` menyalinnya ke workdir
+# sementara, mengganti placeholder dari `.env`, lalu menjalankan:
+#   gcloud deploy apply --file=clouddeploy.yaml --region=<asia-southeast2> --project=<TOOLING_PROJECT>
+#
+# Placeholder (diisi otomatis dari .env / argumen release.sh):
+#   iris-classifier  edm-bribrain-dev-01  gke-bribrain-dev  asia-southeast2
+#
+# Catatan: hanya target `dev` yang aktif. staging/prod disiapkan (commented).
+# =============================================================================
+
+apiVersion: deploy.cloud.google.com/v1
+kind: DeliveryPipeline
+metadata:
+  name: iris-classifier-gke-pipeline
+description: Standard GKE delivery pipeline
+serialPipeline:
+  stages:
+    - targetId: dev
+      profiles: [dev]
+    # --- Aktifkan saat siap ---
+    # - targetId: staging
+    #   profiles: [staging]
+    # - targetId: prod
+    #   profiles: [prod]
+
+---
+# ------------------------------- TARGET: dev ---------------------------------
+apiVersion: deploy.cloud.google.com/v1
+kind: Target
+metadata:
+  name: dev
+description: Development GKE cluster
+gke:
+  cluster: projects/edm-bribrain-dev-01/locations/asia-southeast2/clusters/gke-bribrain-dev
+  # internalIp: true  # uncomment bila control plane hanya punya private endpoint
+
+# ----------------------------- TARGET: staging -------------------------------
+# --- Uncomment saat siap, dan isi STAGING_* di .env ---
+# ---
+# apiVersion: deploy.cloud.google.com/v1
+# kind: Target
+# metadata:
+#   name: staging
+# description: Staging GKE cluster
+# gke:
+#   cluster: projects//locations/asia-southeast2/clusters/
+
+# ------------------------------- TARGET: prod --------------------------------
+# --- Uncomment saat siap, dan isi PROD_* di .env ---
+# --- requireApproval: true -> promosi ke prod perlu approval manual ---
+# ---
+# apiVersion: deploy.cloud.google.com/v1
+# kind: Target
+# metadata:
+#   name: prod
+# description: Production GKE cluster
+# requireApproval: true
+# gke:
+#   cluster: projects//locations/asia-southeast2/clusters/

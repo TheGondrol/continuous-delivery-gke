@@ -1,0 +1,62 @@
+# =============================================================================
+# clouddeploy.yaml - Delivery Pipeline + Targets (template standar, GKE)
+# -----------------------------------------------------------------------------
+# File ini TIDAK di-apply langsung. `release.sh` menyalinnya ke workdir
+# sementara, mengganti placeholder dari `.env`, lalu menjalankan:
+#   gcloud deploy apply --file=clouddeploy.yaml --region=<REGION> --project=<TOOLING_PROJECT>
+#
+# Placeholder (diisi otomatis dari .env / argumen release.sh):
+#   APP_NAME  DEV_PROJECT  DEV_CLUSTER  REGION
+#
+# Catatan: hanya target `dev` yang aktif. staging/prod disiapkan (commented).
+# =============================================================================
+
+apiVersion: deploy.cloud.google.com/v1
+kind: DeliveryPipeline
+metadata:
+  name: APP_NAME-gke-pipeline
+description: Standard GKE delivery pipeline
+serialPipeline:
+  stages:
+    - targetId: dev
+      profiles: [dev]
+    # --- Aktifkan saat siap ---
+    # - targetId: staging
+    #   profiles: [staging]
+    # - targetId: prod
+    #   profiles: [prod]
+
+---
+# ------------------------------- TARGET: dev ---------------------------------
+apiVersion: deploy.cloud.google.com/v1
+kind: Target
+metadata:
+  name: dev
+description: Development GKE cluster
+gke:
+  cluster: projects/DEV_PROJECT/locations/REGION/clusters/DEV_CLUSTER
+  # internalIp: true  # uncomment bila control plane hanya punya private endpoint
+
+# ----------------------------- TARGET: staging -------------------------------
+# --- Uncomment saat siap, dan isi STAGING_* di .env ---
+# ---
+# apiVersion: deploy.cloud.google.com/v1
+# kind: Target
+# metadata:
+#   name: staging
+# description: Staging GKE cluster
+# gke:
+#   cluster: projects/STAGING_PROJECT/locations/REGION/clusters/STAGING_CLUSTER
+
+# ------------------------------- TARGET: prod --------------------------------
+# --- Uncomment saat siap, dan isi PROD_* di .env ---
+# --- requireApproval: true -> promosi ke prod perlu approval manual ---
+# ---
+# apiVersion: deploy.cloud.google.com/v1
+# kind: Target
+# metadata:
+#   name: prod
+# description: Production GKE cluster
+# requireApproval: true
+# gke:
+#   cluster: projects/PROD_PROJECT/locations/REGION/clusters/PROD_CLUSTER

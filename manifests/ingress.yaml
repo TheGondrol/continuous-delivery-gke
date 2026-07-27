@@ -1,0 +1,25 @@
+# =============================================================================
+# ingress.yaml - Ingress INTERNAL (GKE internal HTTP(S) Load Balancer)
+# -----------------------------------------------------------------------------
+# Menggunakan GCE internal ingress. Butuh proxy-only subnet & firewall internal
+# LB tersedia di VPC (biasanya disiapkan tim jaringan).
+# Hapus file ini dari skaffold bila cukup pakai Internal LB di service.yaml saja.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: APP_NAME
+  annotations:
+    # --- INTERNAL HTTP LB ---
+    kubernetes.io/ingress.class: "gce-internal"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: APP_NAME
+                port:
+                  number: 80

@@ -1,0 +1,23 @@
+# =============================================================================
+# service.yaml - Expose Deployment (INTERNAL ONLY via Internal LoadBalancer)
+# -----------------------------------------------------------------------------
+# Annotation Internal LB: hanya bisa diakses dari dalam VPC, bukan internet.
+# Jika hanya butuh akses dalam-cluster, ganti type ke ClusterIP & hapus annotation.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: APP_NAME
+  labels:
+    app: APP_NAME
+  annotations:
+    # --- INTERNAL LOAD BALANCER (GKE) ---
+    networking.gke.io/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app: APP_NAME
+  ports:
+    - name: http
+      port: 80
+      targetPort: APP_PORT

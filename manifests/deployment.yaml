@@ -1,0 +1,52 @@
+# =============================================================================
+# deployment.yaml - Menjalankan pod aplikasi
+# -----------------------------------------------------------------------------
+# Placeholder disubstitusi oleh release.sh: APP_NAME, APP_PORT.
+# Field image: placeholder -> di-override Cloud Deploy via --images.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: APP_NAME
+  labels:
+    app: APP_NAME
+spec:
+  replicas: 2                          # HPA akan menyesuaikan; ini nilai awal
+  selector:
+    matchLabels:
+      app: APP_NAME
+  template:
+    metadata:
+      labels:
+        app: APP_NAME
+    spec:
+      containers:
+        - name: APP_NAME
+          image: APP_NAME              # di-override oleh Cloud Deploy --images
+          ports:
+            - containerPort: APP_PORT
+          envFrom:
+            - configMapRef:
+                name: APP_NAME-config
+            # Secret dari Vault. Manifest-nya dihasilkan release.sh saat rilis
+            # (lihat manifests/secret.yaml di workdir sementara), jadi selalu ada
+            # walau isinya kosong ketika Vault nonaktif.
+            - secretRef:
+                name: APP_NAME-secret
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          readinessProbe:
+            tcpSocket:
+              port: APP_PORT
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: APP_PORT
+            initialDelaySeconds: 20
+            periodSeconds: 15

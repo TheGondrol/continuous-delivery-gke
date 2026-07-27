@@ -1,0 +1,19 @@
+# Konfigurasi lokal — berisi kredensial Nexus. Pakai .env.example sebagai acuan.
+.env
+.env.*
+!.env.example
+
+# Artefak sementara release.sh
+*.bak
+*.rendered.yaml
+# Dihasilkan dari Vault saat rilis — berisi secret mentah, tidak pernah di-commit
+manifests/secret.yaml
+
+# Tooling lokal
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
