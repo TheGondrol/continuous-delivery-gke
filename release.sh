@@ -117,23 +117,37 @@ fi
 # Memakai impersonasi lebih baik daripada mengunduh kunci JSON SA.
 IMPERSONATE_SA="${IMPERSONATE_SA:-}"
 GCLOUD_IMP=""
+SA_PROJECT=""
 if [[ -n "$IMPERSONATE_SA" ]]; then
   GCLOUD_IMP="--impersonate-service-account=$IMPERSONATE_SA"
+  # <nama>@<project>.iam.gserviceaccount.com -> <project>
+  SA_PROJECT="${IMPERSONATE_SA#*@}"
+  SA_PROJECT="${SA_PROJECT%.iam.gserviceaccount.com}"
 fi
 
-# Member IAM untuk pesan bantuan: SA dan akun perorangan punya prefiks berbeda.
-iam_member() {
-  local acct
-  if [[ -n "$IMPERSONATE_SA" ]]; then
-    acct="$IMPERSONATE_SA"
-  else
-    acct="$(gcloud config get-value account 2>/dev/null || true)"
-  fi
-  case "$acct" in
-    *gserviceaccount.com) echo "serviceAccount:$acct" ;;
-    "")                   echo "<akun-anda>" ;;
-    *)                    echo "user:$acct" ;;
+# Prefiks member IAM berbeda antara SA dan akun perorangan.
+as_member() {
+  case "$1" in
+    *gserviceaccount.com) echo "serviceAccount:$1" ;;
+    "")                   echo "<identitas-anda>" ;;
+    *)                    echo "user:$1" ;;
   esac
+}
+
+# Identitas EFEKTIF — yang butuh role di project (SA bila mengimpersonasi).
+iam_member() {
+  if [[ -n "$IMPERSONATE_SA" ]]; then
+    as_member "$IMPERSONATE_SA"
+  else
+    as_member "$(gcloud config get-value account 2>/dev/null || true)"
+  fi
+}
+
+# Identitas PEMANGGIL — akun yang login, mengabaikan impersonasi. Dipakai untuk
+# saran serviceAccountTokenCreator: yang butuh izin meminjam SA adalah pemanggil,
+# bukan SA sasaran (memberi SA izin atas dirinya sendiri tidak menolong apa pun).
+caller_member() {
+  as_member "$(gcloud config get-value account 2>/dev/null || true)"
 }
 
 # Baca satu path Vault (KV v2) -> JSON ke stdout.
@@ -234,14 +248,34 @@ unset NEXUS_PASS
 case "$AR_HOST" in
   *.pkg.dev|*gcr.io)
     echo "   Login ke Artifact Registry: $AR_HOST"
-    AR_TOKEN="$(gcloud auth print-access-token $GCLOUD_IMP 2>/dev/null)" || AR_TOKEN=""
+    # stderr ditangkap, bukan dibuang: pesan asli gcloud sering menyebut sebab
+    # sebenarnya (SA tidak ada, API iamcredentials mati, dsb).
+    AR_ERR="$(mktemp)"
+    AR_TOKEN="$(gcloud auth print-access-token $GCLOUD_IMP 2>"$AR_ERR")" || AR_TOKEN=""
     if [[ -z "$AR_TOKEN" ]]; then
       echo "!! Gagal mengambil access token gcloud untuk $AR_HOST." >&2
+      if [[ -s "$AR_ERR" ]]; then
+        echo "   --- pesan gcloud ---" >&2
+        sed 's/^/   /' "$AR_ERR" >&2
+        echo "   --------------------" >&2
+      fi
+      rm -f "$AR_ERR"
       if [[ -n "$IMPERSONATE_SA" ]]; then
-        echo "   Sedang mengimpersonasi: $IMPERSONATE_SA" >&2
-        echo "   Akun pemanggil butuh roles/iam.serviceAccountTokenCreator pada SA itu:" >&2
-        echo "     gcloud iam service-accounts add-iam-policy-binding $IMPERSONATE_SA \\" >&2
-        echo "       --member='$(iam_member)' --role='roles/iam.serviceAccountTokenCreator'" >&2
+        echo "   Sedang mengimpersonasi : $IMPERSONATE_SA" >&2
+        echo "   Sebagai identitas      : $(caller_member)" >&2
+        echo "" >&2
+        echo "   1) Identitas pemanggil di atas butuh izin meminjam SA itu:" >&2
+        echo "      gcloud iam service-accounts add-iam-policy-binding $IMPERSONATE_SA \\" >&2
+        echo "        --member='$(caller_member)' \\" >&2
+        echo "        --role='roles/iam.serviceAccountTokenCreator' \\" >&2
+        echo "        --project=$SA_PROJECT" >&2
+        echo "" >&2
+        echo "   2) API IAM Credentials harus aktif di project SA:" >&2
+        echo "      gcloud services enable iamcredentials.googleapis.com \\" >&2
+        echo "        --project=$SA_PROJECT" >&2
+        echo "" >&2
+        echo "   3) Bila SA belum boleh dipinjam, kosongkan IMPERSONATE_SA di $ENV_FILE" >&2
+        echo "      untuk kembali memakai akun aktif." >&2
       else
         echo "   Di VM GCE : VM butuh scope 'cloud-platform'. Periksa dengan:" >&2
         echo "     curl -s -H 'Metadata-Flavor: Google' \\" >&2
@@ -250,6 +284,7 @@ case "$AR_HOST" in
       fi
       exit 1
     fi
+    rm -f "$AR_ERR"
     printf '%s' "$AR_TOKEN" \
       | crane auth login "$AR_HOST" -u oauth2accesstoken --password-stdin
     unset AR_TOKEN
