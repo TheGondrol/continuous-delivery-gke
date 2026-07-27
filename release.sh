@@ -77,8 +77,12 @@ vault_read() {
 }
 
 # ---------- Turunan ----------
+# Artifact Registry boleh berada di project sendiri, terpisah dari project
+# tooling Cloud Deploy. Default: ikut TOOLING_PROJECT (perilaku lama).
+AR_PROJECT="${AR_PROJECT:-$TOOLING_PROJECT}"
+
 SRC_IMAGE="${NEXUS_HOST}/${NEXUS_PATH}/${APP_NAME}:${IMAGE_TAG}"
-DST_IMAGE="${AR_HOST}/${TOOLING_PROJECT}/${AR_REPO}/${APP_NAME}:${IMAGE_TAG}"
+DST_IMAGE="${AR_HOST}/${AR_PROJECT}/${AR_REPO}/${APP_NAME}:${IMAGE_TAG}"
 PIPELINE="${APP_NAME}-gke-pipeline"
 RELEASE_NAME="rel-$(date +%Y%m%d-%H%M%S)"
 SECRET_NAME="${APP_NAME}-secret"
@@ -100,6 +104,7 @@ echo "=============================================================="
 echo " App        : $APP_NAME:$IMAGE_TAG   (channel: GKE)"
 echo " Mirror     : $SRC_IMAGE"
 echo "           -> $DST_IMAGE"
+echo " AR project : $AR_PROJECT / $AR_REPO"
 echo " Pipeline   : $PIPELINE  (region $REGION, project $TOOLING_PROJECT)"
 echo " Target dev : $DEV_PROJECT / $DEV_CLUSTER"
 if [[ -n "${VAULT_ADDR:-}" ]]; then

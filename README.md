@@ -62,7 +62,8 @@ cp .env.example .env
 | `REGION` | Region Cloud Deploy & cluster, mis. `asia-southeast2` | ✅ |
 | `APP_PORT` | Port yang di-listen container | ✅ |
 | `TOOLING_PROJECT` | Project tempat pipeline Cloud Deploy didaftarkan | ✅ |
-| `AR_HOST` / `AR_REPO` | Artifact Registry tujuan mirror | ✅ |
+| `AR_HOST` / `AR_REPO` | Host & repo Artifact Registry tujuan mirror | ✅ |
+| `AR_PROJECT` | Project tempat repo AR berada. Kosong = ikut `TOOLING_PROJECT` | — |
 | `NEXUS_HOST` / `NEXUS_PATH` | Sumber image hasil CI on-prem | ✅ |
 | `NEXUS_USER` / `NEXUS_PASS` | Cadangan untuk runner tanpa Vault. Kosongkan bila `VAULT_NEXUS_PATH` dipakai | — |
 | `VAULT_ADDR` | URL Vault on-prem. **Kosongkan untuk menonaktifkan** fitur secret | — |
@@ -292,11 +293,29 @@ gcloud services enable \
 
 ### 2. Repo Artifact Registry (tujuan mirror)
 
+AR berada di project **sendiri** (`AR_PROJECT`), terpisah dari project tooling:
+
 ```bash
-gcloud artifacts repositories create bribrain-dev-repo \
+gcloud services enable artifactregistry.googleapis.com \
+  --project=common-cicd-dev-01
+
+gcloud artifacts repositories create gc-bribrain-dev-gar-temp-01 \
   --repository-format=docker \
   --location=asia-southeast2 \
-  --project=edm-bribrain-dev-01
+  --project=common-cicd-dev-01
+```
+
+Lalu izinkan `crane` di runner mem-push ke sana. Tanpa langkah ini, Fase 1 gagal
+saat push meski `crane` sudah login ke Nexus:
+
+```bash
+# helper kredensial docker untuk host AR (sekali per runner)
+gcloud auth configure-docker asia-southeast2-docker.pkg.dev
+
+# identitas runner butuh izin tulis di project AR
+gcloud artifacts repositories add-iam-policy-binding gc-bribrain-dev-gar-temp-01 \
+  --location=asia-southeast2 --project=common-cicd-dev-01 \
+  --member="serviceAccount:<SA-RUNNER>" --role="roles/artifactregistry.writer"
 ```
 
 ### 3. Izin service account Cloud Deploy
@@ -320,6 +339,32 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 ```
 
 > Untuk staging/prod di project berbeda, SA butuh izin serupa di project tujuan.
+
+#### Izin baca lintas project (wajib, karena AR di project lain)
+
+Node GKE-lah yang mem-*pull* image, memakai service account node-pool-nya —
+bukan SA Cloud Deploy. Karena repo AR ada di `common-cicd-dev-01` sementara
+cluster ada di `edm-bribrain-dev-01`, SA node **harus** diberi izin baca di repo
+itu. Tanpa ini rollout tampak sukses lalu pod berhenti di `ImagePullBackOff`:
+
+```bash
+AR_PROJECT=common-cicd-dev-01
+AR_REPO=gc-bribrain-dev-gar-temp-01
+
+# SA node pool cluster dev — cek dulu yang sebenarnya dipakai:
+gcloud container node-pools describe <NODE_POOL> \
+  --cluster=<DEV_CLUSTER> --region=asia-southeast2 \
+  --project=edm-bribrain-dev-01 --format='value(config.serviceAccount)'
+
+gcloud artifacts repositories add-iam-policy-binding "$AR_REPO" \
+  --location=asia-southeast2 --project="$AR_PROJECT" \
+  --member="serviceAccount:<SA-NODE>" --role="roles/artifactregistry.reader"
+```
+
+> Bila `config.serviceAccount` berisi `default`, yang dipakai adalah
+> `<PROJECT_NUMBER>-compute@developer.gserviceaccount.com` milik project cluster.
+> Ulangi pemberian izin ini untuk setiap cluster (dev/staging/prod) yang
+> menarik image dari repo tersebut.
 
 ### 4. Prasyarat jaringan (internal LB / ingress)
 
@@ -353,7 +398,9 @@ Urutan prioritas: **Vault** → `.env` → sesi `crane` yang sudah login.
 
 - **Environment aktif:** `dev` saja — staging & prod disiapkan tapi masih commented.
 - **Approval:** target `prod` pakai `requireApproval: true`.
-- **Project:** terpisah per environment.
+- **Project:** terpisah per environment. Artifact Registry punya project sendiri
+  (`AR_PROJECT`), dipakai bersama semua environment — jadi setiap cluster butuh
+  izin baca lintas project.
 - **Jaringan:** internal only — Service = Internal LB, Ingress = internal HTTP LB.
 - **Secret:** ditarik dari Vault on-prem saat rilis, dirender jadi Kubernetes
   Secret di workdir sementara, di-apply Cloud Deploy bersama manifest lain.
