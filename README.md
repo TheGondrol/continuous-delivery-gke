@@ -313,17 +313,41 @@ crane version
 sudo apt-get install -y jq        # Debian/Ubuntu
 ```
 
-Lalu sekali saja, agar `crane` bisa push ke Artifact Registry memakai service
-account VM:
+Untuk push ke Artifact Registry, **tidak perlu** `gcloud auth configure-docker`.
+`release.sh` login sendiri memakai access token:
 
 ```bash
-gcloud auth configure-docker asia-southeast2-docker.pkg.dev
+gcloud auth print-access-token | crane auth login "$AR_HOST" \
+  -u oauth2accesstoken --password-stdin
 ```
 
-> VM butuh **scope** `cloud-platform` (atau minimal `devstorage.read_write`) dan
-> SA-nya butuh `roles/artifactregistry.writer` di `common-cicd-dev-01` — lihat
-> setup no. 2. Scope tidak bisa diubah saat VM menyala; kalau kurang, hentikan
-> VM dulu atau pakai VM baru.
+Ini dipilih karena credential helper docker menuntut biner
+`docker-credential-gcloud` ada di `PATH`; bila tidak, `crane` diam-diam
+mengirim permintaan **anonim** dan gagal dengan pesan yang menyesatkan:
+
+```
+DENIED: Unauthenticated request. Unauthenticated requests do not have
+permission "artifactregistry.repositories.uploadArtifacts" on resource ...
+```
+
+Pesan itu terbaca seolah SA kurang izin, padahal tidak ada kredensial terkirim
+sama sekali. Login eksplisit menghilangkan ketergantungan itu.
+
+Yang tetap dibutuhkan:
+
+- VM punya **scope** `cloud-platform` — tidak bisa diubah saat VM menyala:
+  ```bash
+  curl -s -H 'Metadata-Flavor: Google' \
+    http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes
+  ```
+- SA VM punya `roles/artifactregistry.writer` di `common-cicd-dev-01` (setup no. 2):
+  ```bash
+  gcloud auth list                       # SA yang aktif di VM
+  ```
+
+Bila keduanya sudah benar tapi masih gagal, pesan errornya akan **berubah** dari
+`Unauthenticated request` menjadi penolakan yang menyebut nama SA — itu tanda
+kredensial sudah terkirim dan sisanya murni soal IAM.
 
 ### macOS — hanya untuk uji lokal
 

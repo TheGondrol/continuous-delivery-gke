@@ -195,6 +195,34 @@ if [[ -n "${NEXUS_USER:-}" && -n "${NEXUS_PASS:-}" ]]; then
 fi
 unset NEXUS_PASS
 
+# Login ke Artifact Registry secara eksplisit dengan access token gcloud.
+#
+# Sengaja TIDAK mengandalkan credential helper docker (`gcloud auth
+# configure-docker`): `crane` memanggil biner `docker-credential-gcloud`, dan
+# bila biner itu tidak ada di PATH ia diam-diam jatuh ke permintaan anonim.
+# Gejalanya menyesatkan — "DENIED: Unauthenticated request ... uploadArtifacts"
+# yang terbaca seolah SA kurang izin, padahal tidak ada kredensial terkirim.
+case "$AR_HOST" in
+  *.pkg.dev|*gcr.io)
+    echo "   Login ke Artifact Registry: $AR_HOST"
+    AR_TOKEN="$(gcloud auth print-access-token 2>/dev/null)" || AR_TOKEN=""
+    if [[ -z "$AR_TOKEN" ]]; then
+      echo "!! Gagal mengambil access token gcloud untuk $AR_HOST." >&2
+      echo "   Di VM GCE : VM butuh scope 'cloud-platform'. Periksa dengan:" >&2
+      echo "     curl -s -H 'Metadata-Flavor: Google' \\" >&2
+      echo "       http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes" >&2
+      echo "   Di luar   : jalankan 'gcloud auth login', atau set GOOGLE_APPLICATION_CREDENTIALS." >&2
+      exit 1
+    fi
+    printf '%s' "$AR_TOKEN" \
+      | crane auth login "$AR_HOST" -u oauth2accesstoken --password-stdin
+    unset AR_TOKEN
+    ;;
+  *)
+    echo "   AR_HOST bukan host Google ($AR_HOST) - login AR dilewati." >&2
+    ;;
+esac
+
 crane copy "$SRC_IMAGE" "$DST_IMAGE"
 
 # ---------- FASE 2: Render template ----------
