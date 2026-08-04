@@ -14,14 +14,23 @@ Cloud Deploy ke Helm murni.
 
 | | `gke-clouddeploy/release.sh` (Cloud Deploy) | `gke-helm/release.sh` (folder ini) |
 |---|---|---|
-| Mirror image Nexus → Artifact Registry | Ya (`crane copy`) | **Tidak** — image harus sudah ada di registry |
-| Secret dari Vault | Ya, dirender jadi `Secret` | **Tidak** — asumsikan `Secret` sudah ada di cluster |
+| Mirror image Nexus → Artifact Registry | Ya (`crane copy`) | **Tidak** — image harus sudah ada di registry Google, atau pull langsung dari Nexus (lihat di bawah) |
+| Secret **aplikasi** dari Vault | Ya, dirender jadi `Secret` | **Tidak** — asumsikan `Secret` sudah ada di cluster |
+| Kredensial **pull Nexus** dari Vault | Ya (fase 1) | Ya, opsional — `VAULT_NEXUS_PATH` di `.env` |
 | Rollout | Cloud Deploy (`gcloud deploy releases create`) | `helm upgrade --install` langsung |
 | Promosi antar-environment / approval | Ya (dev → staging → prod) | Tidak — tiap environment = release Helm sendiri |
 | Rendering manifest | `sed` placeholder | `values.yaml` Helm |
 
 Kedua template independen — mengubah salah satu tidak memengaruhi yang lain.
 Lihat [README.md](../README.md) di root untuk daftar lengkap kedua channel GKE ini.
+
+> **Image argumen wajib sudah di Artifact Registry (`*.pkg.dev`) atau GCR
+> (`*gcr.io`)** — node GKE cuma auto-autentikasi ke registry Google. Kalau
+> argumen ke-2 menunjuk ke host lain (mis. Nexus on-prem), `release.sh`
+> berhenti di detik pertama dengan pesan ini, bukan setelah rollout
+> `ImagePullBackOff` timeout beberapa menit. Mirror dulu image-nya (mis.
+> `crane copy`, lihat [`gke-clouddeploy/release.sh`](../gke-clouddeploy/release.sh)
+> fase 1) sebelum memanggil `release.sh` di sini.
 
 ## Struktur
 
@@ -53,7 +62,9 @@ chmod +x release.sh
 
 `release.sh` akan:
 1. `gcloud container clusters get-credentials` — set konteks `kubectl` ke cluster tujuan.
-2. `helm upgrade --install <app> ./chart` dengan `image.repository`/`image.tag`
+2. Bila `VAULT_NEXUS_PATH` diisi: buat/refresh Secret pull Nexus dari Vault
+   (lihat [Pull langsung dari Nexus](#pull-langsung-dari-nexus-tanpa-mirror-ke-artifact-registry)) — dilewati bila kosong.
+3. `helm upgrade --install <app> ./chart` dengan `image.repository`/`image.tag`
    dari argumen ke-2, lalu tunggu `kubectl rollout status`.
 
 ### Values per environment
@@ -85,6 +96,83 @@ secretName: iris-classifier-secret
 Kosongkan (default) bila aplikasi tidak butuh secret — `envFrom.secretRef`
 tidak akan dipasang sama sekali.
 
+### Pull langsung dari Nexus (tanpa mirror ke Artifact Registry)
+
+Default channel ini mengasumsikan image sudah di Artifact Registry/GCR — node
+GKE auto-autentikasi ke sana, tidak perlu Secret apa pun (lihat `release.sh`
+yang menolak image di luar `*.pkg.dev`/`*gcr.io` sejak awal). Pull langsung
+dari Nexus **bisa** dilakukan — `release.sh` mendukungnya bawaan, kredensial
+diambil dari Vault dengan pola yang sama seperti fase 1
+[`gke-clouddeploy/release.sh`](../gke-clouddeploy/release.sh).
+
+**Cara pakai** — isi di `.env`:
+
+```bash
+NEXUS_HOST=new-nexus.gcp.bri.co.id
+VAULT_ADDR=https://vault.ddb.bri.co.id
+VAULT_NEXUS_PATH=bribrain/data/development/ms-bribrain-demo-apps
+```
+
+lalu jalankan seperti biasa, cukup argumen image menunjuk ke `NEXUS_HOST`:
+
+```bash
+export VAULT_TOKEN=hvs....   # dari secret variable CI, JANGAN taruh di .env
+./release.sh iris-classifier new-nexus.gcp.bri.co.id/bribrain/dev/iris-classifier:latest
+```
+
+Tiap kali dijalankan, `release.sh` akan:
+1. Membaca `NEXUS_USER`/`NEXUS_PASS` dari `${VAULT_NEXUS_PATH}` di Vault (key
+   sama seperti `.env` — override lewat `VAULT_NEXUS_USER_KEY`/`_PASS_KEY`
+   bila nama key-nya beda).
+2. Membuat/refresh Secret docker-registry `<app-name>-nexus-pull` di
+   `NAMESPACE` — idempoten, aman dipanggil ulang tiap rilis (bukan gagal
+   "already exists" di rilis kedua dan seterusnya).
+3. Memasangnya otomatis ke `imagePullSecretName` saat `helm upgrade`.
+
+Nilainya tidak pernah masuk log — hanya nama user & nama Secret yang dicetak,
+sama seperti `gke-clouddeploy/release.sh`.
+
+Kosongkan `VAULT_NEXUS_PATH` untuk menonaktifkan fitur ini (default) — kembali
+ke perilaku semula, image wajib sudah di Artifact Registry/GCR.
+
+#### Dua syarat yang TIDAK dicakup skrip ini
+
+Kredensial hanyalah satu dari tiga syarat pull langsung dari Nexus — dua
+lainnya di luar kendali `release.sh`/chart, dan kalau belum terpenuhi pull
+tetap gagal meski Secret-nya benar:
+
+1. **Jaringan** — node GKE harus bisa resolve & connect ke `NEXUS_HOST` (VPN/
+   Interconnect + firewall bila Nexus benar-benar on-prem). Gejala gagal:
+   timeout / `no route to host`.
+2. **Kepercayaan TLS** — bila sertifikat Nexus dari CA privat/internal,
+   `containerd` di node GKE perlu mempercayainya. Di *managed node* GKE ini
+   tidak straightforward (butuh custom node image/startup config). Gejala
+   gagal: `x509: certificate signed by unknown authority`.
+
+Kredensial salah/kosong sendiri bergejala `no basic auth credentials` atau
+`unauthorized`.
+
+#### Kredensial pull tanpa Vault
+
+Tanpa Vault (`VAULT_NEXUS_PATH` kosong), Secret pull bisa dibuat manual dan
+dipasang lewat `imagePullSecretName` + `ALLOW_ANY_REGISTRY=1`:
+
+```bash
+kubectl create secret docker-registry nexus-pull \
+  --docker-server=new-nexus.gcp.bri.co.id \
+  --docker-username=<NEXUS_USER> \
+  --docker-password=<NEXUS_PASS> \
+  -n <namespace>
+
+ALLOW_ANY_REGISTRY=1 ./release.sh iris-classifier \
+  new-nexus.gcp.bri.co.id/bribrain/dev/iris-classifier:latest \
+  -- --set imagePullSecretName=nexus-pull
+```
+
+Bedanya dari jalur Vault: Secret ini tidak di-refresh otomatis oleh
+`release.sh` — rotasi kredensial di Nexus perlu diikuti `kubectl create
+secret` ulang secara manual.
+
 ### Verifikasi & rollback
 
 ```bash
@@ -98,8 +186,9 @@ kubectl get deploy,svc,hpa,ingress -n <namespace> -l app=<app-name>
 ## Prasyarat
 
 `release.sh` memeriksa `kubectl`, `helm`, `gcloud`, dan `gke-gcloud-auth-plugin`
-di awal, dan berhenti dengan saran pemasangan yang sesuai OS bila salah satu
-belum ada — skrip tidak meng-install apa pun secara otomatis.
+di awal (plus `curl` & `jq` bila `VAULT_NEXUS_PATH` diisi), dan berhenti
+dengan saran pemasangan yang sesuai OS bila salah satu belum ada — skrip
+tidak meng-install apa pun secara otomatis.
 
 `gke-gcloud-auth-plugin` sering terlewat: `gcloud` bisa saja sudah terpasang
 tapi plugin ini belum, dan `kubectl` akan gagal autentikasi ke GKE dengan

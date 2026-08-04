@@ -13,7 +13,9 @@ berbeda. Baca README masing-masing folder untuk detail lengkap:
 - [gke-clouddeploy/README.md](gke-clouddeploy/README.md) — mirror image Nexus→Artifact
   Registry, tarik secret dari Vault, render manifest, lalu `gcloud deploy`.
 - [gke-helm/README.md](gke-helm/README.md) — chart Helm (dikonversi dari manifest
-  Cloud Deploy), image & secret dianggap sudah siap, deploy via `helm upgrade --install`.
+  Cloud Deploy), image & secret aplikasi dianggap sudah siap, deploy via
+  `helm upgrade --install`. Kredensial pull Nexus tetap bisa diambil dari
+  Vault seperti channel Cloud Deploy (opsional, `VAULT_NEXUS_PATH`).
 
 ---
 

@@ -17,6 +17,16 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+# Nama Secret docker-registry yang SUDAH ADA di namespace tujuan, dipakai
+# untuk pull dari registry yang node GKE tidak auto-autentikasi ke sana
+# (mis. Nexus on-prem). Kosongkan (default) untuk registry Google
+# (Artifact Registry/GCR) — node auto-autentikasi, tidak perlu Secret ini.
+# Buat Secret-nya lebih dulu:
+#   kubectl create secret docker-registry <nama> \
+#     --docker-server=<host-registry> --docker-username=... --docker-password=... \
+#     -n <namespace>
+imagePullSecretName: ""
+
 resources:
   requests:
     cpu: 250m
