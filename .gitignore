@@ -7,7 +7,7 @@
 *.bak
 *.rendered.yaml
 # Dihasilkan dari Vault saat rilis — berisi secret mentah, tidak pernah di-commit
-manifests/secret.yaml
+**/manifests/secret.yaml
 
 # Tooling lokal
 .claude/settings.local.json

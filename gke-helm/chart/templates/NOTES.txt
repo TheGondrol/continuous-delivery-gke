@@ -1,0 +1,12 @@
+{{ .Values.appName }} terpasang di namespace {{ .Release.Namespace }}.
+
+Cek status:
+  kubectl get deploy,svc,hpa,ingress -n {{ .Release.Namespace }} -l app={{ .Values.appName }}
+  kubectl rollout status deployment/{{ .Values.appName }} -n {{ .Release.Namespace }}
+
+{{- if not .Values.secretName }}
+
+Catatan: values.secretName kosong -> pod TIDAK memasang envFrom.secretRef.
+Isi values.secretName ke nama Secret yang sudah ada di cluster bila aplikasi
+butuh secret.
+{{- end }}

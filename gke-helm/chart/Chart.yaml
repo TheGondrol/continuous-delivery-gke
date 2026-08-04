@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gke-app
+description: Chart generik untuk deploy aplikasi ke GKE (dikonversi dari template manifests/ Cloud Deploy)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

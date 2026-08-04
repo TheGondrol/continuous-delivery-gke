@@ -1,0 +1,24 @@
+# =============================================================================
+# service.yaml - Expose Deployment
+# -----------------------------------------------------------------------------
+# values.service.internal=true -> Internal LoadBalancer (hanya bisa diakses
+# dari dalam VPC). Set false untuk LoadBalancer publik.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.appName }}
+  labels:
+    {{- include "gke-app.labels" . | nindent 4 }}
+  {{- if and (eq .Values.service.type "LoadBalancer") .Values.service.internal }}
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Values.appName }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.appPort }}

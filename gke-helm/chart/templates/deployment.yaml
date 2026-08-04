@@ -1,0 +1,49 @@
+# =============================================================================
+# deployment.yaml - Menjalankan pod aplikasi
+# -----------------------------------------------------------------------------
+# secretRef hanya dipasang bila values.secretName diisi — Secret itu dianggap
+# sudah ada di cluster (dibuat/dirotasi di luar chart ini).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.appName }}
+  labels:
+    {{- include "gke-app.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: {{ .Values.appName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.appName }}
+    spec:
+      containers:
+        - name: {{ .Values.appName }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.appPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.appName }}-config
+            {{- if .Values.secretName }}
+            - secretRef:
+                name: {{ .Values.secretName }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.appPort }}
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.appPort }}
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}

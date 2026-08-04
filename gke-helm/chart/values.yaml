@@ -1,0 +1,66 @@
+# =============================================================================
+# values.yaml - Nilai default chart. Timpa lewat -f values-<app>.yaml atau --set.
+# =============================================================================
+
+# Nama aplikasi — dipakai sebagai nama Deployment/Service/ConfigMap/dst.
+appName: my-app
+
+# Port yang di-listen container aplikasi.
+appPort: 5000
+
+replicaCount: 2
+
+image:
+  # Full path image, sudah ada di registry (mis. hasil crane copy ke Artifact
+  # Registry). Chart ini TIDAK membangun atau memindahkan image.
+  repository: asia-southeast2-docker.pkg.dev/PROJECT/REPO/my-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+readinessProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+livenessProbe:
+  initialDelaySeconds: 20
+  periodSeconds: 15
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+# Environment variable non-sensitif aplikasi -> ConfigMap.
+# JANGAN taruh secret di sini.
+config:
+  APP_ENV: dev
+
+# Nama Secret yang SUDAH ADA di cluster (dibuat/di-rotasi di luar chart ini,
+# mis. lewat External Secrets Operator atau kubectl create secret manual).
+# Kosongkan untuk tidak memasang envFrom.secretRef sama sekali.
+secretName: ""
+
+service:
+  type: LoadBalancer
+  port: 80
+  # Internal LoadBalancer (GKE) — hanya bisa diakses dari dalam VPC.
+  # Set ke false untuk LoadBalancer publik, atau ganti service.type ke ClusterIP
+  # bila hanya butuh akses dalam-cluster.
+  internal: true
+
+ingress:
+  # Ingress internal butuh proxy-only subnet & firewall internal LB di VPC
+  # (biasanya disiapkan tim jaringan). Set false bila prasyarat itu belum ada.
+  enabled: true
+  className: gce-internal
+  path: /
+  pathType: Prefix
