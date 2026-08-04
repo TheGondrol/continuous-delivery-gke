@@ -35,8 +35,8 @@ livenessProbe:
 
 autoscaling:
   enabled: true
-  minReplicas: 2
-  maxReplicas: 6
+  minReplicas: 1
+  maxReplicas: 3
   targetCPUUtilizationPercentage: 70
 
 # Environment variable non-sensitif aplikasi -> ConfigMap.
