@@ -5,9 +5,19 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Values.appName }}-config
+  # Nama ini HARUS cocok persis dengan configMapRef.name di deployment.yaml
+  # — dua file beda, saling merujuk lewat pola nama "<appName>-config" yang sama.
   labels:
     {{- include "gke-app.labels" . | nindent 4 }}
 data:
   {{- range $key, $value := .Values.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  # range = loop atas MAP values.config di values.yaml. $key/$value nama
+  # variabel sementara (bisa dinamai apa saja). Tiap iterasi mencetak satu
+  # baris key: "value" — jadi nambah key baru di values.yaml -> config: cukup,
+  # tidak perlu ubah file ini.
+  #
+  # | quote WAJIB ada: tanpa ini, nilai seperti angka (mis. PORT: 8080) akan
+  # dibaca Kubernetes sebagai TIPE ANGKA, padahal env var K8s wajib string —
+  # `kubectl apply` akan error. quote membungkusnya jadi string YAML eksplisit.

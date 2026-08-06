@@ -128,8 +128,8 @@ case "$IMAGE_REPO" in
 esac
 
 # ---------- Prasyarat perkakas ----------
-# Saran pemasangan disesuaikan OS — skrip tidak meng-install apa pun secara
-# otomatis, hanya mencetak perintahnya (konsisten dengan gke-clouddeploy/release.sh).
+# Saran pemasangan buat runner Linux (GCE) — skrip tidak meng-install apa pun
+# secara otomatis, hanya mencetak perintahnya.
 MISSING=""
 for t in kubectl helm gcloud gke-gcloud-auth-plugin; do
   command -v "$t" >/dev/null 2>&1 || MISSING="$MISSING $t"
@@ -141,51 +141,40 @@ if [[ "$NEXUS_PULL_MODE" -eq 1 ]]; then
 fi
 if [[ -n "$MISSING" ]]; then
   echo "!! Perkakas belum terpasang:$MISSING" >&2
+  # gcloud di runner GCE sering terpasang lewat SNAP (bukan apt, bukan
+  # installer interaktif) — di situ baik `apt-get install google-cloud-*`
+  # maupun `gcloud components install` DITOLAK ("managed by an external
+  # package manager"), dan tidak ada snap terpisah untuk gke-gcloud-auth-
+  # plugin. Saran di bawah karena itu memakai cara yang tidak bergantung
+  # pada bagaimana gcloud terpasang: unduh binary resmi langsung (kubectl)
+  # dan tarik plugin dari tarball terpisah tanpa mengganggu gcloud yang
+  # sedang dipakai untuk auth.
   for t in $MISSING; do
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-      case "$t" in
-        kubectl)                 echo "   kubectl: brew install kubectl" >&2 ;;
-        helm)                    echo "   helm   : brew install helm" >&2 ;;
-        gcloud)                  echo "   gcloud : brew install --cask gcloud-cli" >&2 ;;
-        gke-gcloud-auth-plugin)  echo "   gke-gcloud-auth-plugin: gcloud components install gke-gcloud-auth-plugin" >&2 ;;
-        jq)                      echo "   jq     : brew install jq" >&2 ;;
-        curl)                    echo "   curl   : bawaan OS - periksa PATH" >&2 ;;
-      esac
-    else
-      # Runner sesungguhnya (GCE) sering punya gcloud terpasang lewat SNAP
-      # (bukan apt, bukan installer interaktif) — di situ baik `apt-get
-      # install google-cloud-*` maupun `gcloud components install` DITOLAK
-      # ("managed by an external package manager"), dan tidak ada snap
-      # terpisah untuk gke-gcloud-auth-plugin. Saran di bawah karena itu
-      # memakai cara yang tidak bergantung pada bagaimana gcloud terpasang:
-      # unduh binary resmi langsung (kubectl) dan tarik plugin dari tarball
-      # terpisah tanpa mengganggu gcloud yang sedang dipakai untuk auth.
-      case "$t" in
-        kubectl)
-          echo "   kubectl: unduh binary resmi (tidak bergantung cara gcloud terpasang):" >&2
-          echo "     curl -LO \"https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\"" >&2
-          echo "     sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl" >&2
-          ;;
-        helm)
-          echo "   helm   : curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash" >&2
-          ;;
-        gcloud)
-          echo "   gcloud : https://cloud.google.com/sdk/docs/install" >&2
-          ;;
-        gke-gcloud-auth-plugin)
-          echo "   gke-gcloud-auth-plugin: gcloud snap TIDAK bisa 'components install'. Tarik dari" >&2
-          echo "     installer tarball terpisah, tanpa mengganggu gcloud yang aktif:" >&2
-          echo "       curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz" >&2
-          echo "       tar -xf google-cloud-cli-linux-x86_64.tar.gz -C \"\$HOME\"" >&2
-          echo "       \"\$HOME/google-cloud-sdk/install.sh\" --quiet --path-update false --command-completion false" >&2
-          echo "       sudo ln -sf \"\$HOME/google-cloud-sdk/bin/gke-gcloud-auth-plugin\" /usr/local/bin/gke-gcloud-auth-plugin" >&2
-          echo "     Bila gcloud di runner ini terpasang lewat apt (bukan snap), cukup:" >&2
-          echo "       sudo apt-get install -y google-cloud-cli-gke-gcloud-auth-plugin" >&2
-          ;;
-        jq)   echo "   jq     : sudo apt-get install -y jq   # atau: dnf install jq" >&2 ;;
-        curl) echo "   curl   : sudo apt-get install -y curl" >&2 ;;
-      esac
-    fi
+    case "$t" in
+      kubectl)
+        echo "   kubectl: unduh binary resmi (tidak bergantung cara gcloud terpasang):" >&2
+        echo "     curl -LO \"https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\"" >&2
+        echo "     sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl" >&2
+        ;;
+      helm)
+        echo "   helm   : curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash" >&2
+        ;;
+      gcloud)
+        echo "   gcloud : https://cloud.google.com/sdk/docs/install" >&2
+        ;;
+      gke-gcloud-auth-plugin)
+        echo "   gke-gcloud-auth-plugin: gcloud snap TIDAK bisa 'components install'. Tarik dari" >&2
+        echo "     installer tarball terpisah, tanpa mengganggu gcloud yang aktif:" >&2
+        echo "       curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz" >&2
+        echo "       tar -xf google-cloud-cli-linux-x86_64.tar.gz -C \"\$HOME\"" >&2
+        echo "       \"\$HOME/google-cloud-sdk/install.sh\" --quiet --path-update false --command-completion false" >&2
+        echo "       sudo ln -sf \"\$HOME/google-cloud-sdk/bin/gke-gcloud-auth-plugin\" /usr/local/bin/gke-gcloud-auth-plugin" >&2
+        echo "     Bila gcloud di runner ini terpasang lewat apt (bukan snap), cukup:" >&2
+        echo "       sudo apt-get install -y google-cloud-cli-gke-gcloud-auth-plugin" >&2
+        ;;
+      jq)   echo "   jq     : sudo apt-get install -y jq   # atau: dnf install jq" >&2 ;;
+      curl) echo "   curl   : sudo apt-get install -y curl" >&2 ;;
+    esac
   done
   echo "   Detail : README bagian 'Prasyarat'" >&2
   exit 1

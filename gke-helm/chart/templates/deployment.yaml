@@ -3,35 +3,57 @@
 # -----------------------------------------------------------------------------
 # secretRef hanya dipasang bila values.secretName diisi — Secret itu dianggap
 # sudah ada di cluster (dibuat/dirotasi di luar chart ini).
+#
+# Sintaks {{ }} di file ini diproses Helm SEBELUM dikirim ke Kubernetes —
+# hasil akhirnya YAML polos tanpa {{ }} sama sekali. Kubernetes sendiri tidak
+# pernah tahu soal Helm.
 # =============================================================================
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: apps/v1   # grup API "apps", versi "v1" — wajib ada di semua manifest K8s
+kind: Deployment      # jenis resource ini
 metadata:
-  name: {{ .Values.appName }}
+  name: {{ .Values.appName }}   # nama resource di cluster, muncul di `kubectl get deploy`
   labels:
     {{- include "gke-app.labels" . | nindent 4 }}
+    # include memanggil blok reusable dari _helpers.tpl (label standar: app,
+    # helm.sh/chart, dst). nindent 4 = taruh hasilnya di baris baru, indentasi
+    # 4 spasi, supaya sejajar sebagai isi labels:.
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  # Baris replicas: di atas TIDAK ADA SAMA SEKALI di YAML final kalau
+  # autoscaling.enabled: true (default) — HPA (hpa.yaml) yang mengatur angka
+  # ini belakangan, jadi field ini sengaja dihilangkan, bukan diisi 0.
   selector:
     matchLabels:
       app: {{ .Values.appName }}
+  # PENTING: ini kriteria Deployment mengenali Pod miliknya — Deployment TIDAK
+  # menyimpan daftar Pod, ia terus mencari Pod berlabel app: <appName> ini.
   template:
     metadata:
       labels:
         app: {{ .Values.appName }}
+      # Label yang DITEMPELKAN ke tiap Pod baru. HARUS SAMA PERSIS dengan
+      # selector.matchLabels di atas — kalau beda, Deployment akan terus
+      # bikin Pod baru tanpa pernah "melihat" mereka sebagai miliknya.
+      # service.yaml nanti pakai label app: yang sama ini juga untuk routing.
     spec:
       {{- if .Values.imagePullSecretName }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecretName }}
       {{- end }}
-      containers:
+      # String kosong "" = falsy di Helm, jadi blok ini otomatis hilang kalau
+      # imagePullSecretName tidak diisi. Kalau diisi, kubelet (agen tiap
+      # node) pakai kredensial dari Secret itu saat pull image.
+      containers:                       # list (tanda -) — satu Pod bisa punya banyak container (sidecar)
         - name: {{ .Values.appName }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.appPort }}
+          # containerPort ini SEKADAR DOKUMENTASI/INFO buat `kubectl describe`
+          # — tidak benar-benar membuka/menutup port. Yang menentukan adalah
+          # aplikasi di dalam container beneran listen di port itu atau tidak.
           envFrom:
             - configMapRef:
                 name: {{ .Values.appName }}-config
@@ -39,8 +61,17 @@ spec:
             - secretRef:
                 name: {{ .Values.secretName }}
             {{- end }}
+          # envFrom = ambil SEMUA key di ConfigMap/Secret ini jadi env var
+          # sekaligus (beda dengan env: yang menyebut satu-satu). Nama
+          # "<appName>-config" ini HARUS cocok persis dengan name: di
+          # configmap.yaml — dua file beda, saling merujuk lewat pola nama
+          # yang sama.
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # Beda dari field lain di atas: seluruh struktur resources: dari
+          # values.yaml di-toYaml apa adanya (bukan ditulis field per field),
+          # karena bentuknya di values.yaml sudah persis sama dengan yang
+          # Kubernetes harapkan di sini.
           readinessProbe:
             tcpSocket:
               port: {{ .Values.appPort }}
@@ -51,3 +82,10 @@ spec:
               port: {{ .Values.appPort }}
             initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+          # tcpSocket = probe paling sederhana: kubelet cuma coba buka koneksi
+          # TCP, tidak peduli isi responsnya. Alternatifnya httpGet (cek
+          # status code HTTP) atau exec (jalankan command, cek exit code) —
+          # sengaja tidak dipakai di sini karena endpoint tiap app beda-beda
+          # (/health, /predict, dst). Konsekuensi: probe bisa "hijau" walau
+          # HTTP handler aplikasi sebenarnya error — curl manual tetap perlu
+          # buat bukti aplikasi jalan benar, bukan cuma port-nya terbuka.

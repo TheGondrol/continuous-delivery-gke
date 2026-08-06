@@ -1,27 +1,43 @@
 # =============================================================================
 # values.yaml - Nilai default chart. Timpa lewat -f values-<app>.yaml atau --set.
+#
+# File ini SUMBER SEMUA NILAI yang dipakai template di templates/*.yaml lewat
+# {{ .Values.namaField }}. Anggap ini "variabel", template = "kode" yang
+# memakai variabel itu.
 # =============================================================================
 
-# Nama aplikasi — dipakai sebagai nama Deployment/Service/ConfigMap/dst.
+# Nama aplikasi — dipakai sebagai nama Deployment/Service/ConfigMap/HPA/Ingress
+# di SEMUA file templates/. release.sh menimpa ini dari argumen pertama
+# (--set appName=<app-name>), jadi nilai di bawah cuma placeholder.
 appName: my-app
 
-# Port yang di-listen container aplikasi.
+# Port yang di-LISTEN CONTAINER (bukan port Service/eksternal). Dipakai di
+# deployment.yaml (containerPort + kedua probe) dan service.yaml (targetPort).
 appPort: 5000
 
+# Jumlah Pod — TAPI cuma dipakai kalau autoscaling.enabled: false di bawah.
+# Kalau autoscaling aktif (default), HPA yang menentukan jumlah Pod, angka ini
+# diabaikan (lihat {{- if not .Values.autoscaling.enabled }} di deployment.yaml).
 replicaCount: 2
 
 image:
   # Full path image, sudah ada di registry (mis. hasil crane copy ke Artifact
   # Registry). Chart ini TIDAK membangun atau memindahkan image.
+  # release.sh menimpa repository & tag dari argumen ke-2, placeholder juga.
   repository: asia-southeast2-docker.pkg.dev/PROJECT/REPO/my-app
   tag: latest
+  # IfNotPresent = jangan pull ulang kalau image dgn tag ini sudah ada di
+  # node. Beda dgn "Always" yang selalu cek ulang ke registry tiap Pod start.
   pullPolicy: IfNotPresent
 
 # Nama Secret docker-registry yang SUDAH ADA di namespace tujuan, dipakai
 # untuk pull dari registry yang node GKE tidak auto-autentikasi ke sana
 # (mis. Nexus on-prem). Kosongkan (default) untuk registry Google
 # (Artifact Registry/GCR) — node auto-autentikasi, tidak perlu Secret ini.
-# Buat Secret-nya lebih dulu:
+# String kosong "" dianggap "falsy" oleh Helm, jadi blok imagePullSecrets di
+# deployment.yaml otomatis tidak muncul kalau field ini kosong.
+# Buat Secret-nya lebih dulu (atau biarkan release.sh yang buat otomatis dari
+# Vault kalau VAULT_NEXUS_PATH diisi di .env):
 #   kubectl create secret docker-registry <nama> \
 #     --docker-server=<host-registry> --docker-username=... --docker-password=... \
 #     -n <namespace>
@@ -29,48 +45,78 @@ imagePullSecretName: ""
 
 resources:
   requests:
+    # "Jaminan minimum" yang direservasi buat Pod ini di node — dipakai
+    # scheduler buat memilih node mana yang cukup muat. 250m = seperempat
+    # core CPU. Juga jadi PEMBAGI perhitungan persentase HPA di bawah.
     cpu: 250m
     memory: 512Mi
   limits:
+    # Batas atas. Lewat limit memory -> container di-kill (OOMKilled).
+    # Lewat limit CPU -> di-throttle (bukan di-kill, CPU beda perlakuan).
     cpu: "1"
     memory: 1Gi
 
 readinessProbe:
+  # Tunggu sekian detik setelah container start sebelum probe PERTAMA
+  # dijalankan — kasih waktu aplikasi boot dulu.
   initialDelaySeconds: 10
+  # Interval cek berikutnya. Readiness gagal -> Pod dikeluarkan dari Service
+  # (tidak dapat trafik) TAPI TIDAK di-restart.
   periodSeconds: 10
 
 livenessProbe:
+  # Sengaja lebih lama dari readiness (20s > 10s) supaya Pod yang cuma lambat
+  # boot tidak keburu di-restart sebelum readiness sempat jadi hijau duluan.
   initialDelaySeconds: 20
+  # Liveness gagal terus-menerus -> Pod DI-RESTART (beda dari readiness).
   periodSeconds: 15
 
 autoscaling:
+  # false -> hpa.yaml tidak menghasilkan resource sama sekali (lihat
+  # {{- if .Values.autoscaling.enabled }} yang membungkus SELURUH isi file
+  # itu), dan replicaCount di atas yang dipakai sebagai gantinya.
   enabled: true
   minReplicas: 1
   maxReplicas: 3
+  # Target rata-rata pemakaian CPU (dibanding resources.requests.cpu di
+  # atas) di semua Pod. Di atas ini -> tambah Pod. Di bawah -> kurangi Pod.
   targetCPUUtilizationPercentage: 70
 
-# Environment variable non-sensitif aplikasi -> ConfigMap.
+# Environment variable NON-SENSITIF aplikasi -> ConfigMap -> otomatis jadi
+# env var container lewat envFrom di deployment.yaml (lihat configmap.yaml).
+# Ini MAP BEBAS, bukan field tetap — tambah key apa saja di sini tanpa perlu
+# ubah template mana pun.
 # JANGAN taruh secret di sini.
 config:
   APP_ENV: dev
 
-# Nama Secret yang SUDAH ADA di cluster (dibuat/di-rotasi di luar chart ini,
-# mis. lewat External Secrets Operator atau kubectl create secret manual).
-# Kosongkan untuk tidak memasang envFrom.secretRef sama sekali.
+# Nama Secret APLIKASI yang SUDAH ADA di cluster (dibuat/di-rotasi di luar
+# chart ini, mis. lewat External Secrets Operator atau kubectl create secret
+# manual). Beda tujuan dari imagePullSecretName di atas: ini untuk env var
+# yang dibaca KODE APLIKASI, bukan kredensial pull image.
+# Kosongkan (default, "falsy") untuk tidak memasang envFrom.secretRef sama
+# sekali di deployment.yaml.
 secretName: ""
 
 service:
   type: LoadBalancer
+  # Port yang dipakai CLIENT (http://<IP>/... — 80 = default HTTP, makanya
+  # tidak perlu ditulis ":80" di curl/Postman). Diteruskan ke appPort di
+  # dalam Pod lewat targetPort (lihat service.yaml) — dua port ini boleh beda.
   port: 80
-  # Internal LoadBalancer (GKE) — hanya bisa diakses dari dalam VPC.
-  # Set ke false untuk LoadBalancer publik, atau ganti service.type ke ClusterIP
-  # bila hanya butuh akses dalam-cluster.
+  # true -> pasang anotasi Internal LoadBalancer (GKE) di service.yaml, IP
+  # yang dihasilkan cuma bisa diakses dari dalam VPC. Set false untuk
+  # LoadBalancer publik, atau ganti service.type ke ClusterIP bila hanya
+  # butuh akses dalam-cluster (tidak butuh IP eksternal sama sekali).
   internal: true
 
 ingress:
   # Ingress internal butuh proxy-only subnet & firewall internal LB di VPC
-  # (biasanya disiapkan tim jaringan). Set false bila prasyarat itu belum ada.
+  # (biasanya disiapkan tim jaringan). Set false bila prasyarat itu belum
+  # ada — akses tetap bisa lewat Service (service.yaml) tanpa Ingress.
   enabled: true
   className: gce-internal
   path: /
+  # Prefix -> path ini cocok dengan SEMUA url di bawahnya (bukan cuma
+  # persis "/"). Alternatifnya "Exact" -> cuma cocok satu path persis itu.
   pathType: Prefix

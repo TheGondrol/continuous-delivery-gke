@@ -183,6 +183,22 @@ helm rollback <app-name> <revisi> -n <namespace>
 kubectl get deploy,svc,hpa,ingress -n <namespace> -l app=<app-name>
 ```
 
+## Pengingat: verifikasi chart sebelum rilis
+
+Template di `chart/templates/` dikomentari cukup padat (buat belajar Helm/K8s)
+— sebelum rilis berikutnya, terutama setelah **edit manual** ke file di
+`chart/`, jalankan dulu:
+
+```bash
+helm lint chart/
+helm template test chart/ --set image.repository=x --set image.tag=y | less
+```
+
+`helm lint` menangkap kesalahan struktur (indentasi, field wajib hilang,
+`{{ }}` yang tidak nutup dsb.) tanpa perlu cluster. `helm template` mencetak
+YAML final (persis yang akan dikirim ke Kubernetes) — cek dulu di sini kalau
+ada yang terasa aneh, sebelum `helm upgrade --install` beneran mengubah cluster.
+
 ## Prasyarat
 
 `release.sh` memeriksa `kubectl`, `helm`, `gcloud`, dan `gke-gcloud-auth-plugin`
@@ -240,14 +256,6 @@ sudo apt-get install -y kubectl google-cloud-cli-gke-gcloud-auth-plugin
 `gcloud components install kubectl` / `... gke-gcloud-auth-plugin` hanya
 berlaku bila `gcloud` terpasang lewat installer interaktif (tar.gz) —
 periksa dulu dengan `readlink -f "$(which gcloud)"`.
-
-### macOS (uji lokal)
-
-```bash
-brew install kubectl helm
-brew install --cask gcloud-cli    # bukan `brew install gcloud` — formula itu tidak ada
-gcloud components install gke-gcloud-auth-plugin
-```
 
 ### Akses & jaringan
 

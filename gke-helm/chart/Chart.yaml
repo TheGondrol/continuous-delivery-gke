@@ -1,6 +1,10 @@
-apiVersion: v2
-name: gke-app
+# =============================================================================
+# Chart.yaml - Identitas chart. Wajib ada di root chart supaya `helm` tahu
+# folder ini valid chart. Tidak ada logika template di sini, murni metadata.
+# =============================================================================
+apiVersion: v2                          # versi skema Chart.yaml (v2 = Helm 3)
+name: gke-app                           # nama chart — beda dari appName di values.yaml (itu nama APLIKASI)
 description: Chart generik untuk deploy aplikasi ke GKE (dikonversi dari template manifests/ Cloud Deploy)
-type: application
-version: 0.1.0
-appVersion: "1.0.0"
+type: application                       # "application" (deploy langsung) vs "library" (cuma dipakai chart lain)
+version: 0.1.0                          # versi CHART ini sendiri (naik tiap chart berubah)
+appVersion: "1.0.0"                     # versi APLIKASI yang jadi acuan (sekadar label info, tidak dipakai logic apa pun)

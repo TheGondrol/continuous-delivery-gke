@@ -5,6 +5,8 @@
 # values.ingress.enabled=false bila prasyarat itu belum ada.
 # =============================================================================
 {{- if .Values.ingress.enabled }}
+# Sama pola dengan hpa.yaml: kalau false, SELURUH resource Ingress ini tidak
+# dikirim ke cluster — akses tetap bisa lewat Service (service.yaml) saja.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -14,7 +16,7 @@ metadata:
   annotations:
     kubernetes.io/ingress.class: {{ .Values.ingress.className | quote }}
 spec:
-  rules:
+  rules:                             # list — bisa ada banyak aturan routing (mis. /api vs /admin)
     - http:
         paths:
           - path: {{ .Values.ingress.path }}
@@ -24,4 +26,7 @@ spec:
                 name: {{ .Values.appName }}
                 port:
                   number: {{ .Values.service.port }}
+  # backend.service mengarah ke Service yang SAMA dari service.yaml. Ingress
+  # ini murni "pintu masuk HTTP" yang meneruskan ke Service — ia tidak
+  # langsung bicara ke Pod, cuma ke Service, yang baru dari situ ke Pod.
 {{- end }}

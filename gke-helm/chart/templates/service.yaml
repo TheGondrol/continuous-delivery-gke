@@ -14,11 +14,23 @@ metadata:
   annotations:
     networking.gke.io/load-balancer-type: "Internal"
   {{- end }}
+  # `and (eq A "LoadBalancer") B` = dua kondisi sekaligus: type-nya persis
+  # "LoadBalancer" DAN internal: true. Cuma kalau KEDUANYA benar, anotasi ini
+  # dipasang. Beda dari labels: annotations bukan buat matching Kubernetes,
+  # ini dibaca CONTROLLER GKE (di luar cluster) yang beneran bikin Load
+  # Balancer di GCP — anotasi ini yang bilang "buat versi internal, bukan publik".
 spec:
   type: {{ .Values.service.type }}
   selector:
     app: {{ .Values.appName }}
+  # Service TIDAK TAHU Pod mana yang ada — ia terus mencari Pod berlabel
+  # app: <appName> ini (sama seperti selector di deployment.yaml), siapa pun
+  # yang cocok otomatis jadi tujuan trafik. Ini yang bikin Pod boleh mati-
+  # hidup ganti IP tanpa mengganggu akses lewat Service.
   ports:
     - name: http
-      port: {{ .Values.service.port }}
-      targetPort: {{ .Values.appPort }}
+      port: {{ .Values.service.port }}        # port yang dipakai CLIENT (curl http://IP:80/...)
+      targetPort: {{ .Values.appPort }}        # port di DALAM Pod yang sebenarnya dihubungi
+  # port dan targetPort boleh beda (80 di luar -> 5000 di dalam Pod) — inilah
+  # kenapa curl ke port 80 (default HTTP, tidak perlu ditulis) tetap sampai
+  # ke aplikasi yang listen di 5000.

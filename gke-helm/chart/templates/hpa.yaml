@@ -2,6 +2,10 @@
 # hpa.yaml - Horizontal Pod Autoscaler (autoscaling berbasis CPU)
 # =============================================================================
 {{- if .Values.autoscaling.enabled }}
+# Perhatikan: if ini ada di baris PALING ATAS, sebelum apiVersion — beda dari
+# deployment.yaml yang if-nya cuma membungkus satu field kecil. Di sini kalau
+# kondisinya false, SELURUH ISI FILE hilang: Helm tidak mengirim resource
+# HorizontalPodAutoscaler sama sekali ke cluster (bukan kirim resource kosong).
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -13,6 +17,10 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: {{ .Values.appName }}
+  # scaleTargetRef = cara HPA "menunjuk" ke Deployment — BUKAN lewat label
+  # selector seperti Service, tapi langsung sebut kind+name-nya. HPA mengubah
+  # field spec.replicas di object Deployment ini secara langsung, ia tidak
+  # pernah mengelola Pod satu-satu.
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
@@ -22,4 +30,8 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+  # Artinya: hitung rata-rata persentase pemakaian CPU (dibanding
+  # resources.requests.cpu di values.yaml, itu jadi PEMBAGI-nya) di semua Pod
+  # yang cocok scaleTargetRef. Di atas target% -> tambah Pod (sampai
+  # maxReplicas). Di bawah -> kurangi (sampai minReplicas).
 {{- end }}

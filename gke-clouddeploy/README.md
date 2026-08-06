@@ -301,8 +301,6 @@ sebelum menyentuh Vault maupun registry.
 | `gcloud` | `deploy apply` & `releases create` | ✅ |
 | `curl` + `jq` | Baca secret dari Vault | bila `VAULT_ADDR` diisi |
 
-`release.sh` menyesuaikan saran pemasangannya dengan OS tempat ia dijalankan.
-
 ### Runner Linux (GCE) — target sesungguhnya
 
 `gcloud` sudah tersedia di image GCE bawaan Google. Yang perlu ditambahkan
@@ -353,13 +351,6 @@ Yang tetap dibutuhkan:
 Bila keduanya sudah benar tapi masih gagal, pesan errornya akan **berubah** dari
 `Unauthenticated request` menjadi penolakan yang menyebut nama SA — itu tanda
 kredensial sudah terkirim dan sisanya murni soal IAM.
-
-### macOS — hanya untuk uji lokal
-
-```bash
-brew install crane jq
-brew install --cask gcloud-cli     # bukan `brew install gcloud` — formula itu tidak ada
-```
 
 ---
 
